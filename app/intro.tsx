@@ -1,34 +1,26 @@
-// File: app/intro.tsx
-
-import React, { useEffect } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import React, { useEffect } from "react";
+import { View, Text, Image, StyleSheet } from "react-native";
+import { useRouter } from "expo-router";
 
 export default function IntroScreen() {
   const router = useRouter();
 
   useEffect(() => {
-    // Log untuk memeriksa apakah komponen ini dimuat
-    console.log('IntroScreen dimuat!');
-
-    // Setelah 3 detik, navigasi ke halaman utama
     const timer = setTimeout(() => {
-      // Menggunakan '/' untuk menavigasi ke halaman utama (app/index.tsx)
-      router.replace('/');
-    }, 3000); // Durasi 3 detik
-
-    // Membersihkan timer jika komponen di-unmount sebelum waktu habis
-    return () => {
-      console.log('IntroScreen di-unmount!');
-      clearTimeout(timer);
-    };
+      router.replace("/"); // 🔥 penting: jangan pakai "/index"
+    }, 2500);
+    return () => clearTimeout(timer);
   }, []);
 
   return (
     <View style={styles.container}>
-      {/* Gambar Pembukaan (2).png */}
-      <Text style={styles.logoText}>SiUang</Text>
-      <Text style={styles.subText}>Sistem Informasi Keuangan</Text>
+      <Image
+        source={require("../assets/images/Pembukaan (2).png")}
+        style={styles.image}
+        resizeMode="contain"
+      />
+      <Text style={styles.logo}>SiUang</Text>
+      <Text style={styles.desc}>Sistem Informasi Keuangan</Text>
     </View>
   );
 }
@@ -36,21 +28,26 @@ export default function IntroScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#2c2c2c', // Warna latar belakang sesuai desain Pembukaan (1).png
+    backgroundColor: "#2e2f2f",
+    justifyContent: "center",
+    alignItems: "center",
   },
-  logoText: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: 'white',
-    fontStyle: 'italic', // Jika ingin tampilan italic seperti desain
-    marginBottom: 10,
+  image: {
+    width: 200,
+    height: 200,
+    marginBottom: 30,
   },
-  subText: {
-    fontSize: 16,
-    color: '#ccc', // Warna abu-abu muda
-    position: 'absolute', // Atur posisi ke bawah
-    bottom: 50, // Jarak dari bawah
+  logo: {
+    fontSize: 32,
+    color: "#fff",
+    fontWeight: "bold",
+    fontStyle: "italic",
+    marginBottom: 12,
+  },
+  desc: {
+    fontSize: 14,
+    color: "#fff",
+    position: "absolute",
+    bottom: 20,
   },
 });

@@ -10,8 +10,10 @@ import {
   TextInput,
   FlatList,
   Alert,
+  // ActivityIndicator // Dihapus karena tidak ada proses loading ekspor nyata
 } from "react-native";
 import { FontAwesome, MaterialIcons, Entypo } from "@expo/vector-icons";
+// import Print from 'react-native-print'; // Dihapus: library untuk print (termasuk PDF)
 
 // Interface untuk tipe data transaksi
 interface Transaction {
@@ -56,6 +58,9 @@ export default function HomeScreen() {
   const [data, setData] = useState<Transaction[]>([]); // Menyimpan SEMUA transaksi (riwayat harian)
   const [activeTab, setActiveTab] = useState<"Harian" | "Mingguan" | "Bulanan" | "Tahunan">("Harian");
 
+  // State untuk transaksi yang sedang diedit
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+
   // State untuk tanggal saat ini yang ditampilkan di header
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
@@ -66,8 +71,14 @@ export default function HomeScreen() {
   const [exportStartDate, setExportStartDate] = useState("");
   const [exportEndDate, setExportEndDate] = useState("");
   const [exportCategory, setExportCategory] = useState("");
-  const [exportFormat, setExportFormat] = useState(""); // Contoh: PDF, CSV, Excel
+  const [exportFormat, setExportFormat] = useState(""); // Default kosong, bisa diisi manual
+  const [isExporting, setIsExporting] = useState(false); // State untuk indikator loading ekspor (tetap ada untuk simulasi)
   // ------------------------------------
+
+  // --- State baru untuk modal filter/sortir ---
+  const [sortModalVisible, setSortModalVisible] = useState(false);
+  const [sortOrder, setSortOrder] = useState<'latest' | 'oldest'>('latest'); // Default: terbaru
+  // ---------------------------------------------
 
   // Fungsi untuk mendapatkan nama bulan
   const getMonthName = (monthIndex: number) => {
@@ -99,28 +110,67 @@ export default function HomeScreen() {
     setCurrentYear(newYear);
   };
 
-  const handleSave = () => {
-    // Validasi input
+  // Fungsi untuk mengatur nilai input modal saat edit
+  const setModalInputValues = (transaction: Transaction | null) => {
+    if (transaction) {
+      setTanggal(transaction.tanggal);
+      setKategori(transaction.kategori);
+      setJumlah(transaction.jumlah.toString());
+      setKeterangan(transaction.keterangan);
+      setIsIncome(transaction.isIncome);
+    } else {
+      // Reset input jika tidak ada transaksi yang diedit
+      setTanggal("");
+      setKategori("");
+      setJumlah("");
+      setKeterangan("");
+      setIsIncome(true);
+    }
+  };
+
+  // Fungsi untuk membuka modal dalam mode tambah atau edit
+  const openTransactionModal = (transaction: Transaction | null = null) => {
+    setEditingTransaction(transaction); // Set transaksi yang diedit (null untuk tambah baru)
+    setModalInputValues(transaction); // Isi input modal
+    setModalVisible(true); // Buka modal
+  };
+
+  // Fungsi untuk menutup modal dan mereset state
+  const closeTransactionModal = () => {
+    setModalVisible(false);
+    setEditingTransaction(null); // Reset transaksi yang diedit
+    setModalInputValues(null); // Reset input modal
+  };
+
+  // Fungsi untuk menyimpan atau memperbarui transaksi
+  const handleSaveOrUpdate = () => {
     if (!tanggal || !jumlah || isNaN(parseFloat(jumlah))) {
       Alert.alert("Error", "Tanggal dan jumlah harus diisi dengan benar.");
       return;
     }
 
-    const newData: Transaction = {
-      id: Date.now().toString(),
+    const transactionData: Transaction = {
+      id: editingTransaction ? editingTransaction.id : Date.now().toString(), // Gunakan ID yang ada jika edit, atau buat baru
       tanggal,
       kategori,
       jumlah: parseFloat(jumlah),
       keterangan,
       isIncome,
     };
-    setData(prevData => [newData, ...prevData]); // Tambahkan data baru ke awal array
-    setModalVisible(false);
-    // Reset form
-    setTanggal("");
-    setKategori("");
-    setJumlah("");
-    setKeterangan("");
+
+    if (editingTransaction) {
+      // Perbarui transaksi yang ada
+      setData(prevData =>
+        prevData.map(item => (item.id === transactionData.id ? transactionData : item))
+      );
+      Alert.alert("Berhasil", "Transaksi berhasil diperbarui!");
+    } else {
+      // Tambahkan transaksi baru
+      setData(prevData => [transactionData, ...prevData]);
+      Alert.alert("Berhasil", "Transaksi berhasil ditambahkan!");
+    }
+
+    closeTransactionModal(); // Tutup modal dan reset
   };
 
   const handleDelete = (id: string) => {
@@ -130,6 +180,7 @@ export default function HomeScreen() {
         text: "Hapus",
         onPress: () => {
           setData(prev => prev.filter(item => item.id !== id));
+          Alert.alert("Berhasil", "Transaksi berhasil dihapus!");
         },
         style: "destructive",
       },
@@ -141,62 +192,31 @@ export default function HomeScreen() {
     d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
     d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
     const yearStart = new Date(Date.UTC(d.getFullYear(), 0, 1));
-    const weekNo = Math.ceil((((d.valueOf() - yearStart.valueOf()) / 86400000) + 1) / 7);
+    const weekNo = Math.ceil((((d.valueOf() - yearStart.valueOf()) + 1) / 86400000) / 7);
     return weekNo;
   };
 
-  // Fungsi untuk memfilter data berdasarkan tab aktif dan bulan/tahun di header
-  const filterDataByTab = (dataToFilter: Transaction[]) => {
-    const today = new Date();
-    const currentRealDay = today.getDate();
-    const currentRealMonth = today.getMonth();
-    const currentRealYear = today.getFullYear();
-
-    switch (activeTab) {
-      case "Harian":
-        // Filter untuk hari ini (real time)
-        return dataToFilter.filter(item => {
-          const itemDate = new Date(item.tanggal);
-          return (
-            itemDate.getDate() === currentRealDay &&
-            itemDate.getMonth() === currentRealMonth &&
-            itemDate.getFullYear() === currentRealYear
-          );
-        });
-      case "Mingguan":
-        // Untuk tab mingguan, kita perlu mengambil semua transaksi dalam TAHUN yang sedang dipilih di header
-        // dan kemudian mengelompokkannya per minggu.
-        return dataToFilter.filter(item => {
-          const itemDate = new Date(item.tanggal);
-          return itemDate.getFullYear() === currentYear; // Filter hanya transaksi di tahun yang aktif
-        });
-      case "Bulanan":
-        // Untuk tab bulanan, kita perlu mengambil semua transaksi dalam TAHUN yang sedang dipilih di header
-        // dan kemudian mengelompokkannya per bulan.
-        return dataToFilter.filter(item => {
-          const itemDate = new Date(item.tanggal);
-          return itemDate.getFullYear() === currentYear; // Filter hanya transaksi di tahun yang aktif
-        });
-      case "Tahunan":
-        // Untuk tab tahunan, kita perlu mengambil semua transaksi secara keseluruhan
-        // dan kemudian mengelompokkannya per tahun.
-        return dataToFilter; // Mengembalikan semua data untuk agregasi tahunan
-      default:
-        return dataToFilter; // Harusnya tidak pernah tercapai
-    }
+  // Fungsi untuk mendapatkan data harian yang sudah diurutkan
+  const getSortedDailyTransactions = (dataToFilter: Transaction[]) => {
+    return [...dataToFilter].sort((a, b) => {
+      const dateA = new Date(a.tanggal).getTime();
+      const dateB = new Date(b.tanggal).getTime();
+      return sortOrder === 'latest' ? dateB - dateA : dateA - dateB;
+    });
   };
 
-  const allFilteredData = filterDataByTab(data); // Ini adalah semua data yang relevan dengan tab aktif
+  // Data yang akan ditampilkan di tab "Harian" setelah diurutkan
+  const sortedDailyTransactions = getSortedDailyTransactions(data);
 
-  // Logika Pengelompokan dan Agregasi untuk Mingguan
-  const getWeeklySummaries = (transactions: Transaction[]): WeeklySummary[] => {
+  // Logika Pengelompokan dan Agregasi untuk Mingguan (memproses SEMUA data dan diurutkan)
+  const getWeeklySummaries = (transactions: Transaction[], currentSortOrder: 'latest' | 'oldest'): WeeklySummary[] => {
     const weeklyMap = new Map<string, WeeklySummary>();
 
     transactions.forEach(transaction => {
       const transactionDate = new Date(transaction.tanggal);
       const weekNumber = getWeekNumber(transactionDate);
       const year = transactionDate.getFullYear();
-      const key = `${year}-${weekNumber}`; // Kunci unik untuk setiap minggu
+      const key = `${year}-${weekNumber}`;
 
       if (!weeklyMap.has(key)) {
         weeklyMap.set(key, { weekNumber, year, totalIncome: 0, totalExpense: 0 });
@@ -210,24 +230,29 @@ export default function HomeScreen() {
       }
     });
 
-    // Konversi Map ke array dan urutkan berdasarkan nomor minggu terbaru
     return Array.from(weeklyMap.values()).sort((a, b) => {
-        if (b.year !== a.year) return b.year - a.year; // Urutkan dari tahun terbaru
-        return b.weekNumber - a.weekNumber; // Kemudian dari minggu terbaru
+        if (currentSortOrder === 'latest') {
+            if (b.year !== a.year) return b.year - a.year; // Urutkan dari tahun terbaru
+            return b.weekNumber - a.weekNumber; // Kemudian dari minggu terbaru
+        } else { // oldest
+            if (a.year !== b.year) return a.year - b.year; // Urutkan dari tahun terlama
+            return a.weekNumber - b.weekNumber; // Kemudian dari minggu terlama
+        }
     });
   };
 
-  const weeklySummaries = activeTab === "Mingguan" ? getWeeklySummaries(allFilteredData) : [];
+  // Panggil getWeeklySummaries dengan semua data dan sortOrder
+  const weeklySummaries = getWeeklySummaries(data, sortOrder);
 
-  // Logika Pengelompokan dan Agregasi untuk Bulanan
-  const getMonthlySummaries = (transactions: Transaction[]): MonthlySummary[] => {
+  // Logika Pengelompokan dan Agregasi untuk Bulanan (memproses SEMUA data dan diurutkan)
+  const getMonthlySummaries = (transactions: Transaction[], currentSortOrder: 'latest' | 'oldest'): MonthlySummary[] => {
     const monthlyMap = new Map<string, MonthlySummary>();
 
     transactions.forEach(transaction => {
       const transactionDate = new Date(transaction.tanggal);
       const month = transactionDate.getMonth();
       const year = transactionDate.getFullYear();
-      const key = `${year}-${month}`; // Kunci unik untuk setiap bulan
+      const key = `${year}-${month}`;
 
       if (!monthlyMap.has(key)) {
         monthlyMap.set(key, { month, year, totalIncome: 0, totalExpense: 0 });
@@ -241,23 +266,28 @@ export default function HomeScreen() {
       }
     });
 
-    // Konversi Map ke array dan urutkan berdasarkan bulan terbaru
     return Array.from(monthlyMap.values()).sort((a, b) => {
-        if (b.year !== a.year) return b.year - a.year; // Urutkan dari tahun terbaru
-        return b.month - a.month; // Kemudian dari bulan terbaru
+        if (currentSortOrder === 'latest') {
+            if (b.year !== a.year) return b.year - a.year; // Urutkan dari tahun terbaru
+            return b.month - a.month; // Kemudian dari bulan terbaru
+        } else { // oldest
+            if (a.year !== b.year) return a.year - b.year; // Urutkan dari tahun terlama
+            return a.month - b.month; // Kemudian dari bulan terlama
+        }
     });
   };
 
-  const monthlySummaries = activeTab === "Bulanan" ? getMonthlySummaries(allFilteredData) : [];
+  // Panggil getMonthlySummaries dengan semua data dan sortOrder
+  const monthlySummaries = getMonthlySummaries(data, sortOrder);
 
-  // Logika Pengelompokan dan Agregasi untuk Tahunan
-  const getYearlySummaries = (transactions: Transaction[]): YearlySummary[] => {
+  // Logika Pengelompokan dan Agregasi untuk Tahunan (memproses SEMUA data dan diurutkan)
+  const getYearlySummaries = (transactions: Transaction[], currentSortOrder: 'latest' | 'oldest'): YearlySummary[] => {
     const yearlyMap = new Map<string, YearlySummary>();
 
     transactions.forEach(transaction => {
       const transactionDate = new Date(transaction.tanggal);
       const year = transactionDate.getFullYear();
-      const key = `${year}`; // Kunci unik untuk setiap tahun
+      const key = `${year}`;
 
       if (!yearlyMap.has(key)) {
         yearlyMap.set(key, { year, totalIncome: 0, totalExpense: 0 });
@@ -271,36 +301,46 @@ export default function HomeScreen() {
       }
     });
 
-    // Konversi Map ke array dan urutkan berdasarkan tahun terbaru
-    return Array.from(yearlyMap.values()).sort((a, b) => b.year - a.year);
+    return Array.from(yearlyMap.values()).sort((a, b) => {
+        return currentSortOrder === 'latest' ? b.year - a.year : a.year - b.year; // Urutkan dari tahun terbaru atau terlama
+    });
   };
 
-  const yearlySummaries = activeTab === "Tahunan" ? getYearlySummaries(allFilteredData) : [];
+  // Panggil getYearlySummaries dengan semua data dan sortOrder
+  const yearlySummaries = getYearlySummaries(data, sortOrder);
 
 
   // Perhitungan totalIncome, totalExpense, dan saldo akan tergantung pada `activeTab`
+  // dan juga pada tahun/bulan yang dipilih di header untuk tab ringkasan.
   let totalIncomeDisplay = 0;
   let totalExpenseDisplay = 0;
 
+  // Filter ringkasan berdasarkan tahun/bulan yang aktif untuk tampilan di Summary Box
+  // Perhatikan bahwa `weeklySummaries`, `monthlySummaries`, `yearlySummaries` sudah diurutkan berdasarkan `sortOrder`
+  const filteredWeeklySummariesForDisplay = weeklySummaries.filter(summary => summary.year === currentYear);
+  const filteredMonthlySummariesForDisplay = monthlySummaries.filter(summary => summary.year === currentYear && summary.month === currentMonth);
+  const filteredYearlySummariesForDisplay = yearlySummaries; // Tahunan selalu menampilkan semua tahun
+
   if (activeTab === "Mingguan") {
-    totalIncomeDisplay = weeklySummaries.reduce((acc, curr) => acc + curr.totalIncome, 0);
-    totalExpenseDisplay = weeklySummaries.reduce((acc, curr) => acc + curr.totalExpense, 0);
+    totalIncomeDisplay = filteredWeeklySummariesForDisplay.reduce((acc, curr) => acc + curr.totalIncome, 0);
+    totalExpenseDisplay = filteredWeeklySummariesForDisplay.reduce((acc, curr) => acc + curr.totalExpense, 0);
   } else if (activeTab === "Bulanan") {
-    totalIncomeDisplay = monthlySummaries.reduce((acc, curr) => acc + curr.totalIncome, 0);
-    totalExpenseDisplay = monthlySummaries.reduce((acc, curr) => acc + curr.totalExpense, 0);
+    totalIncomeDisplay = filteredMonthlySummariesForDisplay.reduce((acc, curr) => acc + curr.totalIncome, 0);
+    totalExpenseDisplay = filteredMonthlySummariesForDisplay.reduce((acc, curr) => acc + curr.totalExpense, 0);
   } else if (activeTab === "Tahunan") {
-    totalIncomeDisplay = yearlySummaries.reduce((acc, curr) => acc + curr.totalIncome, 0);
-    totalExpenseDisplay = yearlySummaries.reduce((acc, curr) => acc + curr.totalExpense, 0);
+    totalIncomeDisplay = filteredYearlySummariesForDisplay.reduce((acc, curr) => acc + curr.totalIncome, 0);
+    totalExpenseDisplay = filteredYearlySummariesForDisplay.reduce((acc, curr) => acc + curr.totalExpense, 0);
   }
   else { // Harian
-    totalIncomeDisplay = allFilteredData.filter(i => i.isIncome).reduce((a, b) => a + b.jumlah, 0);
-    totalExpenseDisplay = allFilteredData.filter(i => !i.isIncome).reduce((a, b) => a + b.jumlah, 0);
+    // Untuk harian, kita menghitung total berdasarkan semua transaksi yang ada
+    totalIncomeDisplay = data.filter(i => i.isIncome).reduce((a, b) => a + b.jumlah, 0);
+    totalExpenseDisplay = data.filter(i => !i.isIncome).reduce((a, b) => a + b.jumlah, 0);
   }
 
   const saldo = totalIncomeDisplay - totalExpenseDisplay;
 
   // --- Fungsi untuk menangani ekspor data ---
-  const handleExport = () => {
+  const handleExport = () => { // Menghilangkan 'async'
     if (!exportStartDate || !exportEndDate) {
       Alert.alert("Error", "Rentang tanggal harus diisi.");
       return;
@@ -314,9 +354,15 @@ export default function HomeScreen() {
       return;
     }
 
+    setIsExporting(true); // Mulai loading (untuk simulasi)
+
     // Filter data berdasarkan rentang tanggal yang dipilih
     const dataToExport = data.filter(item => {
       const itemDate = new Date(item.tanggal);
+      // Atur waktu ke awal hari untuk perbandingan yang akurat
+      itemDate.setHours(0, 0, 0, 0);
+      startDate.setHours(0, 0, 0, 0);
+      endDate.setHours(23, 59, 59, 999); // Akhir hari untuk endDate
       return itemDate >= startDate && itemDate <= endDate;
     });
 
@@ -328,28 +374,40 @@ export default function HomeScreen() {
     // Simulasikan proses ekspor
     if (finalExportData.length > 0) {
       Alert.alert(
-        "Ekspor Berhasil",
+        "Ekspor Berhasil (Simulasi)",
         `Berhasil mengekspor ${finalExportData.length} transaksi.\n` +
         `Judul: ${exportTitle || 'Tidak ada'}\n` +
         `Rentang: ${exportStartDate} hingga ${exportEndDate}\n` +
         `Kategori: ${exportCategory || 'Semua'}\n` +
-        `Format: ${exportFormat || 'Tidak ditentukan'}`
+        `Format: ${exportFormat || 'Tidak ditentukan'}\n\n` +
+        `Catatan: Fungsi ekspor PDF yang sebenarnya memerlukan pembangunan aplikasi native.`
       );
-      // Di sini Anda akan mengimplementasikan logika ekspor sebenarnya,
-      // misalnya, membuat file CSV/PDF dan menyimpannya.
     } else {
-      Alert.alert("Ekspor Gagal", "Tidak ada transaksi yang ditemukan untuk kriteria yang dipilih.");
+      Alert.alert("Ekspor Gagal (Simulasi)", "Tidak ada transaksi yang ditemukan untuk kriteria yang dipilih.");
     }
 
-    // Reset form ekspor dan tutup modal
-    setExportTitle("");
-    setExportStartDate("");
-    setExportEndDate("");
-    setExportCategory("");
-    setExportFormat("");
-    setExportModalVisible(false);
+    // Menggunakan setTimeout untuk simulasi loading
+    setTimeout(() => {
+      setIsExporting(false); // Selesai loading
+      // Reset form ekspor dan tutup modal
+      setExportTitle("");
+      setExportStartDate("");
+      setExportEndDate("");
+      setExportCategory("");
+      setExportFormat(""); // Reset format
+      setExportModalVisible(false);
+    }, 1500); // Simulasi loading 1.5 detik
   };
   // ------------------------------------------
+
+  // Gunakan useEffect untuk logging debugging
+  useEffect(() => {
+    // console.log("Current Sort Order:", sortOrder);
+    // console.log("Sorted Daily Transactions (Harian):", sortedDailyTransactions.map(t => t.tanggal));
+    // console.log("Weekly Summaries (Mingguan, sorted):", weeklySummaries.map(s => `${s.year}-W${s.weekNumber}`));
+    // console.log("Monthly Summaries (Bulanan, sorted):", monthlySummaries.map(s => `${s.year}-M${s.month}`));
+    // console.log("Yearly Summaries (Tahunan, sorted):", yearlySummaries.map(s => s.year));
+  }, [sortOrder, data, currentYear, currentMonth]); // Tambahkan dependensi agar log diperbarui
 
   return (
     <View style={styles.container}>
@@ -367,11 +425,18 @@ export default function HomeScreen() {
         </View>
         <View style={styles.icons}>
           {/* Tombol ikon unduh untuk membuka modal ekspor */}
-          <TouchableOpacity onPress={() => setExportModalVisible(true)}>
-            <MaterialIcons name="file-download" size={20} color="white" style={styles.icon} />
+          <TouchableOpacity onPress={() => setExportModalVisible(true)} disabled={isExporting}>
+            {isExporting ? (
+              <Text style={{ color: 'white', fontSize: 12 }}>Mengekspor...</Text> // Menggunakan teks sederhana sebagai indikator loading
+            ) : (
+              <MaterialIcons name="file-download" size={20} color="white" style={styles.icon} />
+            )}
           </TouchableOpacity>
-          <MaterialIcons name="tune" size={20} color="white" style={styles.icon} />
-          <FontAwesome name="user" size={20} color="white" style={styles.icon} />
+          {/* Tombol ikon tune untuk membuka modal filter/sortir */}
+          <TouchableOpacity onPress={() => setSortModalVisible(true)}>
+            <MaterialIcons name="tune" size={20} color="white" style={styles.icon} />
+          </TouchableOpacity>
+          {/* <FontAwesome name="user" size={20} color="white" style={styles.icon} /> */}
         </View>
       </View>
 
@@ -402,26 +467,27 @@ export default function HomeScreen() {
       <View style={styles.summaryContainer}>
         <View style={styles.summaryBox}>
           <Text style={styles.label}>Pemasukan</Text>
-          <Text style={styles.income}>{`Rp. ${totalIncomeDisplay.toLocaleString()}`}</Text>
+          <Text style={styles.income}>{`Rp. ${totalIncomeDisplay.toLocaleString('id-ID')}`}</Text>
         </View>
         <View style={styles.summaryBox}>
           <Text style={styles.label}>Pengeluaran</Text>
-          <Text style={styles.expense}>{`Rp. ${totalExpenseDisplay.toLocaleString()}`}</Text>
+          <Text style={styles.expense}>{`Rp. ${totalExpenseDisplay.toLocaleString('id-ID')}`}</Text>
         </View>
         <View style={styles.summaryBox}>
           <Text style={styles.label}>Saldo</Text>
-          <Text style={styles.balance}>{`Rp. ${saldo.toLocaleString()}`}</Text>
+          <Text style={styles.balance}>{`Rp. ${saldo.toLocaleString('id-ID')}`}</Text>
         </View>
       </View>
 
-      {/* Daftar Transaksi / Ringkasan */}
-      {activeTab === "Harian" ? ( // Perbaiki urutan kondisi agar Harian selalu terakhir jika tidak ada tab lain yang cocok
+      {/* Daftar Transaksi / Riwayat */}
+      {activeTab === "Harian" ? (
         <FlatList
-          data={allFilteredData} // Gunakan data yang sudah difilter
+          data={sortedDailyTransactions} // Menggunakan data harian yang sudah diurutkan
           keyExtractor={item => item.id}
           renderItem={({ item }) => (
             <TouchableOpacity
-              onLongPress={() => handleDelete(item.id)}
+              onPress={() => openTransactionModal(item)} // Tekan untuk Edit
+              onLongPress={() => handleDelete(item.id)} // Tekan Lama untuk Hapus
               style={styles.transactionBox}
             >
               <View style={styles.dateBox}>
@@ -433,9 +499,9 @@ export default function HomeScreen() {
               </View>
               <View style={styles.transactionDetails}>
                 {item.isIncome ? (
-                  <Text style={styles.income}>{`Rp. ${item.jumlah.toLocaleString()}`}</Text>
+                  <Text style={styles.income}>{`Rp. ${item.jumlah.toLocaleString('id-ID')}`}</Text>
                 ) : (
-                  <Text style={styles.expense}>{`Rp. ${item.jumlah.toLocaleString()}`}</Text>
+                  <Text style={styles.expense}>{`Rp. ${item.jumlah.toLocaleString('id-ID')}`}</Text>
                 )}
                 <Text style={{ color: 'white' }}>Catatan : {item.keterangan}</Text>
               </View>
@@ -443,20 +509,20 @@ export default function HomeScreen() {
           )}
           ListEmptyComponent={
             <Text style={{ color: '#777', textAlign: 'center', marginTop: 20 }}>
-              Belum ada transaksi untuk periode ini.
+              Belum ada transaksi.
             </Text>
           }
         />
       ) : activeTab === "Mingguan" ? (
         <FlatList
-          data={weeklySummaries}
+          data={weeklySummaries} // Menampilkan semua ringkasan mingguan yang sudah diurutkan
           keyExtractor={item => `${item.year}-${item.weekNumber}`}
           renderItem={({ item }) => (
             <View style={styles.summaryItemBox}>
-              <Text style={styles.summaryItemText}>{`Minggu ${item.weekNumber}`}</Text>
+              <Text style={styles.summaryItemText}>{`Minggu ${item.weekNumber}, ${item.year}`}</Text> {/* Tambah tahun */}
               <View style={styles.summaryAmountsContainer}>
-                <Text style={[styles.income, styles.summaryAmount]}>{`Rp. ${item.totalIncome.toLocaleString()}`}</Text>
-                <Text style={[styles.expense, styles.summaryAmount]}>{`Rp. ${item.totalExpense.toLocaleString()}`}</Text>
+                <Text style={[styles.income, styles.summaryAmount]}>{`Rp. ${item.totalIncome.toLocaleString('id-ID')}`}</Text>
+                <Text style={[styles.expense, styles.summaryAmount]}>{`Rp. ${item.totalExpense.toLocaleString('id-ID')}`}</Text>
               </View>
             </View>
           )}
@@ -468,14 +534,14 @@ export default function HomeScreen() {
         />
       ) : activeTab === "Bulanan" ? (
         <FlatList
-          data={monthlySummaries}
+          data={monthlySummaries} // Menampilkan semua ringkasan bulanan yang sudah diurutkan
           keyExtractor={item => `${item.year}-${item.month}`}
           renderItem={({ item }) => (
             <View style={styles.summaryItemBox}>
-              <Text style={styles.summaryItemText}>{getMonthName(item.month)}</Text>
+              <Text style={styles.summaryItemText}>{`${getMonthName(item.month)} ${item.year}`}</Text> {/* Tambah tahun */}
               <View style={styles.summaryAmountsContainer}>
-                <Text style={[styles.income, styles.summaryAmount]}>{`Rp. ${item.totalIncome.toLocaleString()}`}</Text>
-                <Text style={[styles.expense, styles.summaryAmount]}>{`Rp. ${item.totalExpense.toLocaleString()}`}</Text>
+                <Text style={[styles.income, styles.summaryAmount]}>{`Rp. ${item.totalIncome.toLocaleString('id-ID')}`}</Text>
+                <Text style={[styles.expense, styles.summaryAmount]}>{`Rp. ${item.totalExpense.toLocaleString('id-ID')}`}</Text>
               </View>
             </View>
           )}
@@ -487,14 +553,14 @@ export default function HomeScreen() {
         />
       ) : activeTab === "Tahunan" ? (
         <FlatList
-          data={yearlySummaries}
+          data={yearlySummaries} // Menampilkan semua ringkasan tahunan yang sudah diurutkan
           keyExtractor={item => `${item.year}`}
           renderItem={({ item }) => (
             <View style={styles.summaryItemBox}>
               <Text style={styles.summaryItemText}>{`${item.year}`}</Text>
               <View style={styles.summaryAmountsContainer}>
-                <Text style={[styles.income, styles.summaryAmount]}>{`Rp. ${item.totalIncome.toLocaleString()}`}</Text>
-                <Text style={[styles.expense, styles.summaryAmount]}>{`Rp. ${item.totalExpense.toLocaleString()}`}</Text>
+                <Text style={[styles.income, styles.summaryAmount]}>{`Rp. ${item.totalIncome.toLocaleString('id-ID')}`}</Text>
+                <Text style={[styles.expense, styles.summaryAmount]}>{`Rp. ${item.totalExpense.toLocaleString('id-ID')}`}</Text>
               </View>
             </View>
           )}
@@ -504,15 +570,15 @@ export default function HomeScreen() {
             </Text>
           }
         />
-      ) : null} {/* Tambahkan null jika tidak ada tab yang cocok */}
+      ) : null}
 
 
       {/* Tombol Tambah */}
-      <TouchableOpacity style={styles.fab} onPress={() => setModalVisible(true)}>
+      <TouchableOpacity style={styles.fab} onPress={() => openTransactionModal()}>
         <FontAwesome name="plus" size={24} color="white" />
       </TouchableOpacity>
 
-      {/* Form Input Modal Transaksi */}
+      {/* Form Input Modal Transaksi (Tambah/Edit) */}
       <Modal visible={modalVisible} transparent animationType="slide">
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
@@ -561,10 +627,10 @@ export default function HomeScreen() {
               onChangeText={setKeterangan}
             />
 
-            <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-              <Text style={{ color: 'white' }}>Simpan</Text>
+            <TouchableOpacity style={styles.saveButton} onPress={handleSaveOrUpdate}>
+              <Text style={{ color: 'white' }}>{editingTransaction ? 'Perbarui' : 'Simpan'}</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.cancelButton}>
+            <TouchableOpacity onPress={closeTransactionModal} style={styles.cancelButton}>
               <Text style={{ color: 'white' }}>Batal</Text>
             </TouchableOpacity>
           </View>
@@ -613,24 +679,66 @@ export default function HomeScreen() {
               style={styles.exportInput}
               value={exportFormat}
               onChangeText={setExportFormat}
+              // editable={false} // Dihapus: agar format bisa diisi manual untuk simulasi
             />
 
             <View style={styles.exportButtonContainer}>
               <TouchableOpacity
                 onPress={() => setExportModalVisible(false)}
                 style={styles.exportCancelButton}
+                disabled={isExporting} // Nonaktifkan saat exporting
               >
                 <Text style={styles.exportButtonText}>BATAL</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleExport}
                 style={styles.exportButton}
+                disabled={isExporting} // Nonaktifkan saat exporting
               >
-                <Text style={styles.exportButtonText}>EKSPOR</Text>
+                <Text style={styles.exportButtonText}>
+                  {isExporting ? 'Mengekspor...' : 'EKSPOR'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* Modal Filter/Sortir */}
+      <Modal visible={sortModalVisible} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.sortModalOverlay}
+          activeOpacity={1}
+          onPress={() => setSortModalVisible(false)} // Tutup modal saat overlay ditekan
+        >
+          <View style={styles.sortModalContent}>
+            <TouchableOpacity
+              style={styles.sortOption}
+              onPress={() => {
+                setSortOrder('latest');
+                setSortModalVisible(false);
+              }}
+            >
+              <Text style={styles.sortOptionText}>TERBARU</Text>
+              {sortOrder === 'latest' && (
+                <MaterialIcons name="check" size={24} color="#FFD700" style={styles.sortCheckIcon} />
+              )}
+            </TouchableOpacity>
+            <View style={styles.sortDivider} />
+            <TouchableOpacity
+              style={styles.sortOption}
+              onPress={() => {
+                setSortOrder('oldest');
+                setSortModalVisible(false);
+              }}
+            >
+              <Text style={styles.sortOptionText}>TERLAMA</Text>
+              {sortOrder === 'oldest' && (
+                <MaterialIcons name="check" size={24} color="#FFD700" style={styles.sortCheckIcon} />
+              )}
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
       </Modal>
     </View>
   );
@@ -784,5 +892,44 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+
+  // --- Gaya Baru untuk Modal Filter/Sortir ---
+  sortModalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-start', // Posisikan di atas
+    alignItems: 'flex-end', // Posisikan di kanan
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingTop: 50, // Sesuaikan dengan paddingTop header Anda
+    paddingRight: 16, // Sesuaikan dengan paddingHorizontal header Anda
+  },
+  sortModalContent: {
+    backgroundColor: '#FFD700', // Warna kuning keemasan seperti desain
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    width: 150, // Lebar modal filter
+    // Posisi relatif terhadap ikon tune
+    marginTop: 40, // Sesuaikan ini agar muncul di bawah ikon tune
+    marginRight: 0, // Sesuaikan ini agar sejajar dengan ikon tune
+  },
+  sortOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+  },
+  sortOptionText: {
+    color: '#333', // Warna teks gelap
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  sortDivider: {
+    height: 1,
+    backgroundColor: '#ccc', // Garis pemisah
+    marginVertical: 5,
+  },
+  sortCheckIcon: {
+    marginLeft: 10,
   },
 });
